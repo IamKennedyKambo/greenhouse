@@ -1,119 +1,60 @@
-package question3;//package question3;//: innerclasses/GreenhouseControls.java
+package question3;
 
-import javax.swing.*;
 import java.io.*;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.util.*;
+import java.util.Date;
+import java.util.Scanner;
 
-abstract class Event implements Runnable {
-    private boolean paused = false;
-    private long eventTime;
-    protected final long delayTime;
+import static question4.GreenhouseControlsGUI.gui;
 
-    public Event(long delayTime) {
-        this.delayTime = delayTime;
-        start();
-    }
-
-    public void start() {
-        eventTime = System.currentTimeMillis() + delayTime;
-    }
-
-    public boolean ready() {
-        return System.currentTimeMillis() >= eventTime;
-    }
-
-    public abstract void action() throws ControllerException;
-
-    public static void main(String[] args) {
-
-    }
-
-    public synchronized void pause() {
-        paused = true;
-    }
-
-    public synchronized void resume() {
-        paused = false;
-        notify();
-    }
-
-    @Override
-    public void run() {
-        synchronized (this) {
-            while (paused) {
-                try {
-                    wait();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
-}
-
-class Controller {
-    private final List<Event> eventList = new ArrayList<>();
-
-    public static boolean eventsPaused = false;
-
-    public void addEvent(Event c) {
-        eventList.add(c);
-        System.out.println("Event added: " + c);
-    }
-
-//    public void run() throws ControllerException {
-//        while (!eventList.isEmpty()) {
-//            for (Event e : new ArrayList<>(eventList)) {
-//                if (e.ready()) {
-//                    System.out.println(e);
-//                    System.out.println("Ready to execute: " + e);
-//                    e.action();
-//                    eventList.remove(e);
-//                }
-//            }
-//        }
-//    }
-
-    public void run() throws ControllerException {
-        while (!eventList.isEmpty()) {
-            for (Event e : new ArrayList<>(eventList)) {
-                if (!eventsPaused && e.ready()) {
-                    System.out.println(e);
-                    System.out.println("Ready to execute: " + e);
-                    e.action();
-                    eventList.remove(e);
-                }
-            }
-            synchronized (this) {
-                if (eventsPaused) {
-                    try {
-                        wait();
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-    }
-}
-
-public class GreenhouseControls extends Controller {
+public class GreenhouseControls extends Controller implements Serializable {
+    // Fields that set variables to proper status for testing purposes
+    private volatile boolean suspended = false; // Add this line
     private boolean light = false;
     private boolean water = false;
     private String thermostat = "Day";
-    private String eventsFile = "examples.txt";
+    public static String eventsFile = "examples4.txt";
     private boolean fans = false;
-    private boolean windowok = false;
-    private boolean poweron = false;
-    private int errorcode;
-    Map<String, Object> stateVariables = new HashMap<>();
+    private boolean windowok = true;
+    private boolean poweron = true;
+    private int errorCode;
+    private int checkerror = 0;
+    private boolean isRunning = false;
+    private boolean isSuspended = false;
 
-    interface Fixable {
-        void fix();
+    public class FansOn extends Event {
+        public FansOn(long delayTime) {
+            super(delayTime);
+        }
 
-        void log();
+        @Override
+        public void action() {
+            // Put hardware control code here to
+            // physically turn on the light.
+            fans = true;
+            logEventState("Fans on");
+        }
+
+        public String toString() {
+            return "Fan is on";
+        }
+    }
+
+    public class FansOff extends Event {
+        public FansOff(long delayTime) {
+            super(delayTime);
+        }
+
+        @Override
+        public void action() {
+            // Put hardware control code here to
+            // physically turn on the light.
+            fans = false;
+            logEventState("Fans off");
+        }
+
+        public String toString() {
+            return "Fan is off";
+        }
     }
 
     public class LightOn extends Event {
@@ -122,7 +63,10 @@ public class GreenhouseControls extends Controller {
         }
 
         public void action() {
+            // Put hardware control code here to
+            // physically turn on the light.
             light = true;
+            logEventState("Light on");
         }
 
         public String toString() {
@@ -136,9 +80,10 @@ public class GreenhouseControls extends Controller {
         }
 
         public void action() {
-
+            // Put hardware control code here to
             // physically turn off the light.
             light = false;
+            logEventState("Light off");
         }
 
         public String toString() {
@@ -154,6 +99,7 @@ public class GreenhouseControls extends Controller {
         public void action() {
             // Put hardware control code here.
             water = true;
+            logEventState("Greenhouse water is on");
         }
 
         public String toString() {
@@ -169,6 +115,7 @@ public class GreenhouseControls extends Controller {
         public void action() {
             // Put hardware control code here.
             water = false;
+            logEventState("Greenhouse water is off");
         }
 
         public String toString() {
@@ -184,6 +131,7 @@ public class GreenhouseControls extends Controller {
         public void action() {
             // Put hardware control code here.
             thermostat = "Night";
+            logEventState("Thermostat on night setting");
         }
 
         public String toString() {
@@ -198,6 +146,7 @@ public class GreenhouseControls extends Controller {
 
         public void action() {
             // Put hardware control code here.
+            logEventState("Thermostat on day setting");
             thermostat = "Day";
         }
 
@@ -207,22 +156,26 @@ public class GreenhouseControls extends Controller {
     }
 
     public class Bell extends Event {
-        private final int rings;
-
-        public Bell(long delayTime, int rings) {
+        public Bell(long delayTime, long rings) {
             super(delayTime);
-            this.rings = rings;
-        }
-
-        public void action() {
+            long ringTime = 0;
+            // 2000ms after each ring more bell events are added
             if (rings > 0) {
-                System.out.println("Bing!");
-                addEvent(new Bell(delayTime + 2000, rings - 1));
+                for (int i = 1; i < Math.toIntExact(rings); i++) {
+                    int difference = (i * 2000);
+                    ringTime = difference + delayTime;
+                    addEvent(new Bell(delayTime, 0));
+                }
+                start();
             }
         }
 
+        public void action() {
+            logEventState("Bell ring");
+        }
+
         public String toString() {
-            return "Bell rings: " + rings;
+            return "Bing!";
         }
     }
 
@@ -232,51 +185,155 @@ public class GreenhouseControls extends Controller {
             eventsFile = filename;
         }
 
+        // action() method that starts the system by reading from a text file
         public void action() {
+            // Field that sets functionality variables and creates a file for scanning
+            File file = new File(eventsFile);
+            String line = "";
+            String event = "";
+            long time = 0;
+            // try statement to scan given text file
             try {
-                BufferedReader br = new BufferedReader(new FileReader(eventsFile));
-                String line;
-                while ((line = br.readLine()) != null) {
-                    String[] parts = line.split(",");
-                    long time = Long.parseLong(parts[1].trim().split("=")[1]);
-                    String event = parts[0].trim().split("=")[1];
-                    switch (event) {
-                        case "ThermostatNight":
-                            addEvent(new ThermostatNight(time));
-                            break;
-                        case "LightOn":
-                            addEvent(new LightOn(time));
-                            break;
-                        case "WaterOff":
-                            addEvent(new WaterOff(8000));
-                            break;
-                        case "ThermostatDay":
-                            addEvent(new ThermostatDay(10000));
-                            break;
-                        case "Bell":
-                            addEvent(new Bell(3000, 3));
-                            break;
-                        case "WaterOn":
-                            addEvent(new WaterOn(6000));
-                            break;
-                        case "LightOff":
-                            addEvent(new LightOff(4000));
-                            break;
-                        case "Terminate":
-                            addEvent(new Terminate(12000));
-                            break;
+                Scanner scan = new Scanner(file);
+                boolean limit = scan.hasNextLine();
+                // if statements to check if WindowMalfunction or PowerOut has occured
+                if (checkerror == 1) {
+                    while (!(event.equals("WindowMalfunction")) && limit) {
+                        line = scan.nextLine();
+                        event = getEventName(line);
+                    }
+                    time = getEventTime(line) + 1;
+                } else if (checkerror == 2) {
+                    while (!(event.equals("PowerOut")) && limit) {
+                        line = scan.nextLine();
+                        event = getEventName(line);
+                    }
+                    time = getEventTime(line) + 1;
+                }
+                scan.close();
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            }
+            // try statement to scan given text file
+            try {
+                Scanner scanner = new Scanner(file);
+                // while loop that scans through the text file
+                while (scanner.hasNextLine()) {
+                    line = scanner.nextLine();
+                    event = getEventName(line);
+                    long rings = 0;
+                    long measure = 0;
+                    // if statement to check if event is bell and the number of rings is given
+                    if (event.equals("Bell")) {
+                        if (line.contains("rings")) {
+                            rings = getBellRings(line);
+                            measure = getBellTime(line);
+                        } else {
+                            measure = getEventTime(line);
+                        }
+                    } else {
+                        measure = getEventTime(line);
+                    }
+                    // execution variable that is used when new events are added
+                    long execution = measure - time;
+                    long x = 15000;
+                    // enhanced switch statements to add the correct event for each line
+                    if (execution > 0) {
+                        switch (event) {
+                            case "ThermostatDay" -> addEvent(new ThermostatDay(execution));
+                            case "ThermostatNight" -> addEvent(new ThermostatNight(execution));
+                            case "FansOff" -> addEvent(new FansOff(execution));
+                            case "FansOn" -> addEvent(new FansOn(execution));
+                            case "LightOff" -> addEvent(new LightOff(execution));
+                            case "LightOn" -> addEvent(new LightOn(execution));
+                            case "WaterOff" -> addEvent(new WaterOff(execution));
+                            case "WaterOn" -> addEvent(new WaterOn(execution));
+                            case "Terminate" -> addEvent(new Terminate(execution));
+                            case "WindowMalfunction" -> addEvent(new WindowMalfunction(execution));
+                            case "PowerOut" -> addEvent(new PowerOut(execution));
+                            case "Bell" -> addEvent(new Bell(execution, rings));
+                        }
                     }
                 }
-                br.close();
-            } catch (IOException e) {
+                logEventState("Restarting system");
+                scanner.close();
+            } catch (FileNotFoundException e) {
                 e.printStackTrace();
-            } catch (NullPointerException e) {
-                JOptionPane.showMessageDialog(null, "No events file chosen. Choose an events file to proceed");
             }
         }
 
         public String toString() {
             return "Restarting system";
+        }
+    }
+
+    public String getEventName(String line) {
+        String name;
+        Scanner scanner = new Scanner(line);
+        String[] part1 = scanner.nextLine().split("=");
+        String[] part2 = part1[1].split(",");
+        name = part2[0];
+        return name;
+    }
+
+    public long getEventTime(String line) {
+        long time;
+        Scanner scanner = new Scanner(line);
+        String[] part1 = scanner.nextLine().split("=");
+        time = Long.parseLong(part1[2]);
+        return time;
+    }
+
+    public long getBellTime(String line) {
+        long time;
+        Scanner scanner = new Scanner(line);
+        String[] part = scanner.nextLine().split("=");
+        String[] part2 = part[2].split(",");
+        time = Long.parseLong(part2[0]);
+        return time;
+    }
+
+    public long getBellRings(String line) {
+        long rings;
+        Scanner scanner = new Scanner(line);
+        String[] part = scanner.nextLine().split("=");
+        rings = Long.parseLong(part[3]);
+        return rings;
+    }
+
+    public class WindowMalfunction extends Event {
+        public WindowMalfunction(long delayTime) {
+            super(delayTime);
+        }
+
+        @Override
+        public void action() {
+            errorCode = 1;
+            windowok = false;
+            String error = "Window Malfunction";
+            logEventState("Window malfunctioned");
+        }
+
+        public String toString() {
+            return "Window Malfunction";
+        }
+    }
+
+    public class PowerOut extends Event {
+        public PowerOut(long delayTime) {
+            super(delayTime);
+        }
+
+        @Override
+        public void action() {
+            errorCode = 2;
+            poweron = false;
+            String error = "Power Outage";
+            logEventState("Power outage experienced");
+        }
+
+        public String toString() {
+            return "Power Outage";
         }
     }
 
@@ -286,121 +343,13 @@ public class GreenhouseControls extends Controller {
         }
 
         public void action() {
-            System.exit(0);
+            logEventState("Terminating operation");
+//            System.exit(0);
         }
 
         public String toString() {
             return "Terminating";
         }
-    }
-
-    public class FansOff extends Event {
-        public FansOff(long delayTime) {
-            super(delayTime);
-        }
-
-        public void action() {
-            fans = false;
-        }
-
-        public String toString() {
-            return "Fans off";
-        }
-    }
-
-    public class FansOn extends Event {
-        public FansOn(long delayTime) {
-            super(delayTime);
-        }
-
-        public void action() {
-            fans = true;
-        }
-
-        public String toString() {
-            return "Fans on";
-        }
-    }
-
-    public class WindowMalfunction extends Event {
-        public WindowMalfunction(long delayTime) {
-            super(delayTime);
-        }
-
-        public void action() {
-            windowok = false;
-            poweron = false;
-            try {
-                throw new ControllerException("Window Malfunction detected.");
-            } catch (ControllerException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        public String toString() {
-            return "Window malfunction detected";
-        }
-    }
-
-    public class PowerOut extends Event {
-        public PowerOut(long delayTime) {
-            super(delayTime);
-        }
-
-        public void action() throws ControllerException {
-            windowok = false;
-            poweron = false;
-            throw new ControllerException("Power Outage detected.");
-        }
-
-        public String toString() {
-            return "Power out";
-        }
-    }
-
-    public int getError() {
-        return errorcode;
-    }
-
-    private Fixable getFixable(int errorCode) {
-        switch (errorcode) {
-            case 1:
-                return new PowerOn();
-            case 2:
-                return new FixWindow();
-            default:
-                return null;
-        }
-    }
-
-    public void shutdown() {
-        System.out.println("Emergency shutdown initiated.");
-
-        // Log the error to error.log
-        String errorMessage = "Emergency shutdown due to ";
-        if (errorcode == 1) {
-            errorMessage += "Window Malfunction";
-        } else if (errorcode == 2) {
-            errorMessage += "Power Outage";
-        } else {
-            errorMessage += "Unknown Error";
-        }
-        String errorLog = new Date() + ": " + errorMessage;
-
-        try (PrintWriter writer = new PrintWriter(new FileWriter("error.log", true))) {
-            writer.println(errorLog);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        // Serialize and save the GreenhouseControls object
-        try (ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream("dump.out"))) {
-            out.writeObject(this);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        System.exit(1); // Exit the program with a non-zero status code
     }
 
     public static void printUsage() {
@@ -409,132 +358,250 @@ public class GreenhouseControls extends Controller {
         System.out.println("  java GreenhouseControls -d dump.out");
     }
 
-    private class PowerOn implements Fixable {
-        public void fix() {
-            poweron = true;
-            errorcode = 0;
+    @Override
+    public void shutdown(ControllerException controllerException) {
+        System.out.println(controllerException.error);
+        dumpOut();
+        errorLog();
+        System.exit(0);
+    }
+
+    public void errorLog() {
+        File file = new File("error.txt");
+        Date date = new Date(System.currentTimeMillis());
+        try {
+            file.createNewFile();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
 
-        public void log() {
-            // Log the fix to fix.log
-            String fixLog = new Date() + ": Power fixed.";
-            try (PrintWriter writer = new PrintWriter(new FileWriter("fix.log", true))) {
-                writer.println(fixLog);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-
-        public String toString() {
-            return "Power on";
+        try {
+            BufferedWriter bufferedWriter = getBufferedWriter(file, date);
+            bufferedWriter.close();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
-    private class FixWindow implements Fixable {
+    private BufferedWriter getBufferedWriter(File file, Date date) throws IOException {
+        BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(file));
+        if (errorCode == 1) {
+            bufferedWriter.write("Warning! Window Malfunction");
+            bufferedWriter.newLine();
+            bufferedWriter.write("Time stamp: ");
+            bufferedWriter.write(String.valueOf(date));
+        } else if (errorCode == 2) {
+            bufferedWriter.write("Warning! Power Outage");
+            bufferedWriter.newLine();
+            bufferedWriter.write("Time stamp: ");
+            bufferedWriter.write(String.valueOf(date));
+        }
+        return bufferedWriter;
+    }
+
+    public void dumpOut() {
+        String dump = "dump.out";
+        try {
+            FileOutputStream fileOutputStream = new FileOutputStream(dump);
+            ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
+            objectOutputStream.writeObject(this);
+            objectOutputStream.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public class FIxWindow implements Fixable {
         public void fix() {
             windowok = true;
-            errorcode = 0;
+            errorCode = 0;
         }
 
         public void log() {
-            // Log the fix to fix.log
-            String fixLog = new Date() + ": Window fixed.";
-            try (PrintWriter writer = new PrintWriter(new FileWriter("fix.log", true))) {
-                writer.println(fixLog);
+            File file = new File("fix.log");
+            Date date = new Date(System.currentTimeMillis());
+            try {
+                file.createNewFile();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            try {
+                BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(file));
+                bufferedWriter.write("Window Malfunction | Fixed");
+                bufferedWriter.newLine();
+                bufferedWriter.write("Time Stamp: ");
+                bufferedWriter.write(String.valueOf(date));
+                bufferedWriter.close();
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
     }
 
-    static class Restore {
-        private final String filename;
-
-        public Restore(String filename) {
-            this.filename = filename;
+    public class PowerOn implements Fixable {
+        public void fix() {
+            poweron = true;
+            errorCode = 0;
         }
 
-        public void restoreAndRun(GreenhouseControls gc) {
-            // Load the dumped object and restore the system state
-            try (ObjectInputStream in = new ObjectInputStream(new FileInputStream(filename))) {
-                GreenhouseControls restoredControls = (GreenhouseControls) in.readObject();
-                // Restore the necessary variables and fix issues
-                gc.light = restoredControls.light;
-                gc.water = restoredControls.water;
-                gc.thermostat = restoredControls.thermostat;
-                gc.eventsFile = restoredControls.eventsFile;
-                gc.fans = restoredControls.fans;
-                gc.windowok = restoredControls.windowok;
-                gc.poweron = restoredControls.poweron;
-                gc.errorcode = restoredControls.errorcode;
+        public void log() {
+            File file = new File("fix.log");
+            Date date = new Date(System.currentTimeMillis());
+            try {
+                file.createNewFile();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            try {
+                BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(file));
+                bufferedWriter.write("Power Outage | Fixed");
+                bufferedWriter.newLine();
+                bufferedWriter.write("Time Stamp: ");
+                bufferedWriter.write(String.valueOf(date));
+                bufferedWriter.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
-                // Start running the restored system
-                gc.run();
+    public int getError() {
+        return errorCode;
+    }
+
+    public Fixable getFixable(int errorCode) {
+        Fixable fixable = null;
+        switch (errorCode) {
+            case 1 -> fixable = new FIxWindow();
+            case 2 -> fixable = new PowerOn();
+            default -> System.out.println("Errors: 0");
+        }
+        return fixable;
+    }
+
+    public static class Restore {
+        GreenhouseControls greenhouseControls = new GreenhouseControls();
+        String path = "";
+
+        public void fix(String filenname) {
+            try {
+                ObjectInputStream objectInputStream = new ObjectInputStream(new FileInputStream(path + filenname));
+                greenhouseControls = (GreenhouseControls) objectInputStream.readObject();
+                // if statements to print state of system to console
+                if (!greenhouseControls.windowok) {
+                    System.out.println("Warning! Window Malfunction");
+                }
+                if (!greenhouseControls.poweron) {
+                    System.out.println("Warning! Power Outage");
+                }
+                if (greenhouseControls.light) {
+                    System.out.println("Light | on");
+                } else {
+                    System.out.println("Light | off");
+                }
+                if (greenhouseControls.water) {
+                    System.out.println("Water | on");
+                } else {
+                    System.out.println("Water | off");
+                }
+                if (greenhouseControls.fans) {
+                    System.out.println("Fans | on");
+                } else {
+                    System.out.println("Fans | off");
+                }
+                if (greenhouseControls.thermostat.equals("Day")) {
+                    System.out.println("Thermostat | Day");
+                } else if (greenhouseControls.thermostat.equals("Night")) {
+                    System.out.println("Thermostat | Night");
+                }
+                // gets errorCode value and sets it for tracking
+                int errorCode = greenhouseControls.getError();
+                greenhouseControls.checkerror = errorCode;
+                // creates Fixable with errorCode and logs  error
+                Fixable fixable = greenhouseControls.getFixable(errorCode);
+                if (fixable != null) {
+                    fixable.log();
+                    fixable.fix();
+                }
+                // restarts system and runs GreenhouseControls object
+                greenhouseControls.addEvent(greenhouseControls.new Restart(0, eventsFile));
+                greenhouseControls.run();
+                objectInputStream.close();
             } catch (IOException | ClassNotFoundException | ControllerException e) {
                 e.printStackTrace();
             }
         }
     }
 
-    public synchronized void setVariable(String key, Object value) {
-        stateVariables.put(key, value);
+    public boolean isRunning() {
+        return isRunning;
     }
 
-    public synchronized Object getVariable(String key) {
-        return stateVariables.get(key);
+    public boolean isSuspended() {
+        return isSuspended;
     }
 
-    synchronized Event createEvent(String eventName, long delayTime) {
-        try {
-            Class<?> eventClass = Class.forName(eventName);
-            Constructor<?> constructor = eventClass.getConstructor(long.class);
-            return (Event) constructor.newInstance(delayTime);
-        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException |
-                 InstantiationException | InvocationTargetException e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
-
-    // Method to pause event processing
-    public void pauseEvents() {
-        eventsPaused = true;
-    }
-
-    // Method to resume event processing
-    public void resumeEvents() {
-        eventsPaused = false;
-        synchronized (this) {
-            notifyAll();
-        }
-    }
-
-    public static void main(String[] args) {
-        GreenhouseControls gc = new GreenhouseControls();
-
-        if (args.length < 2) {
-            printUsage();
-            return;
-        }
-
-        String option = args[0];
-        String filename = args[1];
-
-        try {
-            System.out.println(option);
-            if (option.equals("-f")) {
-                gc.addEvent(gc.new Restart(0, filename));
-                gc.run();
-            } else if (option.equals("-d")) {
-                Restore restore = new Restore(filename);
-                restore.restoreAndRun(gc);
+    public void run() throws ControllerException {
+        isRunning = true;
+        while (isRunning) {
+            if (!isSuspended) {
+                super.run();
             } else {
+                suspendEvents();
+            }
+        }
+    }
+
+    // Method to suspend events
+    public void suspendEvents() {
+        for (Event event : Controller.eventList) {
+            event.suspend();
+            isSuspended = true;
+        }
+
+    }
+
+    public void resumeEvents() {
+        for (Event event : Controller.eventList) {
+//            if (event) {
+//                event.resume();
+//            }
+        }
+    }
+
+    private static void logEventState(String eventState) {
+        String logMessage = String.format("%s\n", eventState);
+        if (gui != null) {
+            gui.appendToTextArea(logMessage);
+        }
+    }
+
+    //---------------------------------------------------------
+    public static void main(String[] args) {
+        try {
+            String option = args[0];
+            String filename = args[1];
+            if (!(option.equals("-f")) && !(option.equals("-d"))) {
                 System.out.println("Invalid option");
                 printUsage();
             }
-        } catch (ControllerException ce) {
-            System.out.println(ce.getMessage());
-            gc.shutdown();
+            GreenhouseControls gc = new GreenhouseControls();
+            if (option.equals("-f")) {
+                gc.addEvent(gc.new Restart(0, filename));
+            } else if ((option.equals("-d")) && (filename.equals("dump.out"))) {
+                Restore restore = new Restore();
+                restore.fix(filename);
+            }
+            gc.run();
+
+            if (gc.isRunning()) {
+                System.out.println("GreenhouseControls is running.");
+            } else {
+                System.out.println("GreenhouseControls is not running.");
+            }
+        } catch (ArrayIndexOutOfBoundsException | ControllerException e) {
+            System.out.println("Invalid number of parameters");
+            printUsage();
         }
     }
 }
